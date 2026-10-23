@@ -6,6 +6,10 @@ All notable changes to Recap are documented here. The format follows
 
 ## Unreleased
 
+### Fixed
+
+- Include the Followups thread card in the recap prompt on every provider, including Codex.
+
 ## 0.2.4 - 2026-10-09
 
 ### Added

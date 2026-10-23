@@ -459,13 +459,17 @@ test("adds the thread card to a Claude recap prompt", async () => {
   }
 });
 
-test("does not read or send the thread card on another provider", async () => {
-  let reads = 0;
-  const harness = await createHarness({ getPluginMetadata: async () => { reads += 1; return { card }; } });
+test("adds the thread card to a Codex recap prompt", async () => {
+  const requested: Array<{ threadId: string; pluginId: string }> = [];
+  const harness = await createHarness({
+    providerId: "codex",
+    getPluginMetadata: async (args) => { requested.push(args); return { card }; },
+  });
   try {
     await harness.handlers.recap_generate({ threadId: "A", automatic: false });
-    assert.equal(reads, 0);
-    assert.doesNotMatch(harness.spawned[0].prompt, /thread_card/);
+    assert.deepEqual(requested.map(({ threadId, pluginId }) => ({ threadId, pluginId })), [{ threadId: "A", pluginId: "followups" }]);
+    assert.match(harness.spawned[0].prompt, /<thread_card>\nProject: Smart Followups\nTask: Ship the thread card\nGoal: Recap knows the purpose\nFocus fit: Primary focus\n<\/thread_card>/);
+    assert.match(harness.spawned[0].prompt, /never a source of what was done/);
   } finally {
     await harness.close();
   }

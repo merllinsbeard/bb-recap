@@ -14,7 +14,6 @@ import {
   MAX_TRANSCRIPT_CHARS,
   parsePositiveInteger,
   parseThreadCard,
-  THREAD_CARD_PROVIDER_ID,
   createGenerationLimiter,
   GENERATION_REASONS,
   isRunningThreadStatus,
@@ -624,10 +623,8 @@ export default async function plugin(bb: BbPluginApi) {
 
   const readThreadCard = async (
     threadId: string,
-    providerId: string,
     signal?: AbortSignal,
   ) => {
-    if (providerId !== THREAD_CARD_PROVIDER_ID) return undefined;
     try {
       const threads = bb.sdk.threads as unknown as {
         getPluginMetadata(args: {
@@ -675,7 +672,7 @@ export default async function plugin(bb: BbPluginApi) {
         config.prompt,
         input.transcript,
         input.previousRecap,
-        await readThreadCard(thread.id, execution.providerId, signal),
+        await readThreadCard(thread.id, signal),
       ),
     });
 

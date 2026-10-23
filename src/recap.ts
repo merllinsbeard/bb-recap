@@ -136,9 +136,6 @@ const threadCardReader = z
 
 export type ThreadCard = z.infer<typeof threadCardReader>;
 
-/** The Followups card is read only for Claude-run recaps; card text never goes to another vendor. */
-export const THREAD_CARD_PROVIDER_ID = "claude-code";
-
 /** Tolerant reader for the Followups card (v1); anything else is "no card". */
 export function parseThreadCard(raw: unknown): ThreadCard | undefined {
   const parsed = threadCardReader.safeParse(raw);
