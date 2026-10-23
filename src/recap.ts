@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export const DEFAULT_RECAP_PROMPT = `You are an internal recap worker.
 
 Return exactly one plain-text sentence of about 25–40 words, with no heading, bullets, markdown, or extra explanation. Use the language of the user's messages. Lead with "You asked …" for questions or reviews, or "We <past-tense verb> …" for implemented changes. Mention concrete files, symbols, flags, endpoints, decisions, or remaining work when present. Never invent progress. Do not call tools. If almost nothing happened, say "You had just begun this session."`;
@@ -122,16 +124,56 @@ function escapeTranscript(text: string): string {
 const PREVIOUS_RECAP_INSTRUCTIONS =
   "Write a replacement recap for the whole session. Use the previous recap for earlier work and the new transcript for what happened next. Same one-sentence, 25–40 word rules. Carry forward still-relevant files, symbols, decisions, and unfinished work. Prefer the new transcript when they conflict. Do not say the session just began.";
 
+const threadCardReader = z
+  .object({
+    v: z.literal(1),
+    project: z.string().optional(),
+    task: z.string().optional(),
+    goals: z.array(z.string()).optional(),
+    focusFit: z.string().optional(),
+  })
+  .passthrough();
+
+export type ThreadCard = z.infer<typeof threadCardReader>;
+
+/** The Followups card is read only for Claude-run recaps; card text never goes to another vendor. */
+export const THREAD_CARD_PROVIDER_ID = "claude-code";
+
+/** Tolerant reader for the Followups card (v1); anything else is "no card". */
+export function parseThreadCard(raw: unknown): ThreadCard | undefined {
+  const parsed = threadCardReader.safeParse(raw);
+  if (!parsed.success) return undefined;
+  const card = parsed.data;
+  return card.project || card.task || card.goals?.length || card.focusFit
+    ? card
+    : undefined;
+}
+
+const THREAD_CARD_INSTRUCTIONS =
+  "The <thread_card> block describes the thread's purpose and goals. Use it only to understand what the work is for. It is never a source of what was done; take that only from the transcript.";
+
+function threadCardBlock(card: ThreadCard): string {
+  const lines = [
+    card.project ? `Project: ${card.project}` : "",
+    card.task ? `Task: ${card.task}` : "",
+    ...(card.goals ?? []).map((goal) => `Goal: ${goal}`),
+    card.focusFit ? `Focus fit: ${card.focusFit}` : "",
+  ].filter(Boolean);
+  return `\n\n${THREAD_CARD_INSTRUCTIONS}\n\n<thread_card>\n${escapeTranscript(lines.join("\n"))}\n</thread_card>`;
+}
+
 export function buildRecapPrompt(
   prompt: string,
   transcript: string,
   previousRecap?: string,
+  card?: ThreadCard,
 ): string {
   const previous = previousRecap?.trim();
+  const cardBlock = card ? threadCardBlock(card) : "";
   const previousBlock = previous
     ? `\n\nPrevious recap:\n<previous-recap>\n${escapeTranscript(previous)}\n</previous-recap>\n\n${PREVIOUS_RECAP_INSTRUCTIONS}`
     : "";
-  return `${normalizeRecapPrompt(prompt)}${previousBlock}\n\n${UNTRUSTED_TRANSCRIPT_INSTRUCTIONS}\n\n<session-transcript>\n${escapeTranscript(transcript)}\n</session-transcript>`;
+  return `${normalizeRecapPrompt(prompt)}${previousBlock}${cardBlock}\n\n${UNTRUSTED_TRANSCRIPT_INSTRUCTIONS}\n\n<session-transcript>\n${escapeTranscript(transcript)}\n</session-transcript>`;
 }
 
 export const MAX_TRANSCRIPT_CHARS = 120_000;

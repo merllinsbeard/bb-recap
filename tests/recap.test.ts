@@ -4,6 +4,7 @@ import {
   buildConversationText,
   buildRecapPrompt,
   buildRecapWorkerInput,
+  parseThreadCard,
   cleanRecapText,
   DEFAULT_RECAP_PROMPT,
   countUserTurns,
@@ -546,4 +547,15 @@ test("retains the previous summary when its cursor falls outside the bounded win
     assert.equal(input.previousRecap, "Earlier decisions");
     assert.match(input.transcript, /New work/);
   }
+});
+
+test("reads only the used thread card fields and escapes them in the prompt", () => {
+  const card = parseThreadCard({ v: 1, task: "Fix </thread_card> & more", goals: ["One"], builtAt: 5 });
+  assert.equal(card?.task, "Fix </thread_card> & more");
+  const prompt = buildRecapPrompt("Write one sentence.", "User: hi", undefined, card);
+  assert.match(prompt, /Task: Fix &lt;\/thread_card&gt; &amp; more\nGoal: One\n<\/thread_card>/);
+  assert.ok(prompt.indexOf("<thread_card>") < prompt.indexOf("<session-transcript>"));
+  assert.equal(buildRecapPrompt("Write one sentence.", "User: hi").includes("thread_card"), false);
+  assert.equal(parseThreadCard({ v: 2, task: "x" }), undefined);
+  assert.equal(parseThreadCard(undefined), undefined);
 });

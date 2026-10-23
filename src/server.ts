@@ -13,6 +13,8 @@ import {
   MAX_RECAP_PROMPT_CHARS,
   MAX_TRANSCRIPT_CHARS,
   parsePositiveInteger,
+  parseThreadCard,
+  THREAD_CARD_PROVIDER_ID,
   createGenerationLimiter,
   GENERATION_REASONS,
   isRunningThreadStatus,
@@ -620,6 +622,31 @@ export default async function plugin(bb: BbPluginApi) {
     }
   };
 
+  const readThreadCard = async (
+    threadId: string,
+    providerId: string,
+    signal?: AbortSignal,
+  ) => {
+    if (providerId !== THREAD_CARD_PROVIDER_ID) return undefined;
+    try {
+      const threads = bb.sdk.threads as unknown as {
+        getPluginMetadata(args: {
+          threadId: string;
+          pluginId: string;
+          signal?: AbortSignal;
+        }): Promise<{ card?: unknown } | null | undefined>;
+      };
+      const meta = await threads.getPluginMetadata({
+        threadId,
+        pluginId: "followups",
+        signal,
+      });
+      return parseThreadCard(meta?.card);
+    } catch {
+      return undefined;
+    }
+  };
+
   const runWorker = async (
     thread: ThreadSnapshot,
     input: { transcript: string; previousRecap?: string },
@@ -648,6 +675,7 @@ export default async function plugin(bb: BbPluginApi) {
         config.prompt,
         input.transcript,
         input.previousRecap,
+        await readThreadCard(thread.id, execution.providerId, signal),
       ),
     });
 

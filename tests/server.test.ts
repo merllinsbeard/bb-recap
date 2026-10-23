@@ -16,7 +16,10 @@ async function createHarness(options: {
   wait?: (threadId: string) => Promise<void>;
   database?: Database.Database;
   listThreads?: (args: { parentThreadId?: string }) => Promise<unknown[]>;
+  providerId?: string;
+  getPluginMetadata?: (args: { threadId: string; pluginId: string }) => Promise<unknown>;
 } = {}) {
+  const providerId = options.providerId ?? "p";
   const db = options.database ?? new Database(":memory:");
   const settings = { auto: true, autoCleanup: true, afterSeconds: 86_400, minTurns: 1, maxConcurrent: 1, displayMode: "Compact banner", prompt: "Return a recap." } as RecapSettings;
   const events = new Map<string, (payload: unknown) => void>();
@@ -35,7 +38,7 @@ async function createHarness(options: {
     storage: {
       database: () => db,
       migrate: (_: unknown, statements: string[]) => statements.forEach((statement) => db.exec(statement)),
-      kv: { get: async (key: string) => key === "settings" ? settings : { providerId: "p", model: "m", reasoningLevel: "low" }, set: async () => {} },
+      kv: { get: async (key: string) => key === "settings" ? settings : { providerId, model: "m", reasoningLevel: "low" }, set: async () => {} },
     },
     sdk: {
       subscribe: () => () => {},
@@ -48,9 +51,10 @@ async function createHarness(options: {
         })),
         spawn: async (input: (typeof spawned)[number]) => { spawned.push(input); return { id: String(spawned.length) }; },
         wait: async ({ threadId }: { threadId: string }) => { await options.wait?.(threadId); return {}; },
+        ...(options.getPluginMetadata ? { getPluginMetadata: options.getPluginMetadata } : {}),
         output: async () => ({ output: "We did work." }), archive: async () => {}, stop: async () => {},
       },
-      providers: { models: async () => ({ models: [{ id: "m", model: "m", supportedReasoningEfforts: [{ reasoningEffort: "low" }], defaultReasoningEffort: "low" }], providers: [{ id: "p" }] }) },
+      providers: { models: async () => ({ models: [{ id: "m", model: "m", supportedReasoningEfforts: [{ reasoningEffort: "low" }], defaultReasoningEffort: "low" }], providers: [{ id: providerId }] }) },
     },
     rpc: { register: (_: unknown, registered: typeof handlers) => { handlers = registered; } },
     cli: { register: () => {} }, events: { on: (name: string, callback: (payload: unknown) => void) => { events.set(name, callback); } },
@@ -434,5 +438,56 @@ test("a child that starts running cancels an in-flight recap until it finishes",
   } finally {
     release.resolve();
     await harness.close();
+  }
+});
+
+const card = { v: 1, project: "Smart Followups", task: "Ship the thread card", goals: ["Recap knows the purpose"], focusFit: "Primary focus", builtAt: 1, extra: "ignored" };
+
+test("adds the thread card to a Claude recap prompt", async () => {
+  const requested: Array<{ threadId: string; pluginId: string }> = [];
+  const harness = await createHarness({
+    providerId: "claude-code",
+    getPluginMetadata: async (args) => { requested.push(args); return { card }; },
+  });
+  try {
+    await harness.handlers.recap_generate({ threadId: "A", automatic: false });
+    assert.deepEqual(requested.map(({ threadId, pluginId }) => ({ threadId, pluginId })), [{ threadId: "A", pluginId: "followups" }]);
+    assert.match(harness.spawned[0].prompt, /<thread_card>\nProject: Smart Followups\nTask: Ship the thread card\nGoal: Recap knows the purpose\nFocus fit: Primary focus\n<\/thread_card>/);
+    assert.match(harness.spawned[0].prompt, /never a source of what was done/);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("does not read or send the thread card on another provider", async () => {
+  let reads = 0;
+  const harness = await createHarness({ getPluginMetadata: async () => { reads += 1; return { card }; } });
+  try {
+    await harness.handlers.recap_generate({ threadId: "A", automatic: false });
+    assert.equal(reads, 0);
+    assert.doesNotMatch(harness.spawned[0].prompt, /thread_card/);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("builds the recap without a card when the read fails or the shape is wrong", async () => {
+  const cases: Array<() => Promise<unknown>> = [
+    async () => { throw new Error("metadata unavailable"); },
+    async () => ({ card: { v: 2, task: "Future card" } }),
+    async () => ({ card: { v: 1, goals: "not a list" } }),
+    async () => ({ card: { v: 1 } }),
+    async () => null,
+  ];
+  for (const getPluginMetadata of cases) {
+    const harness = await createHarness({ providerId: "claude-code", getPluginMetadata });
+    try {
+      const result = await harness.handlers.recap_generate({ threadId: "A", automatic: false });
+      assert.ok(result.recap);
+      assert.equal(harness.spawned.length, 1);
+      assert.doesNotMatch(harness.spawned[0].prompt, /thread_card/);
+    } finally {
+      await harness.close();
+    }
   }
 });
